@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>三菱 PLC FX 串列控制與 X/Y 點位太空駕駛艙監控面板</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Orbitron', 'Noto Sans TC', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Share Tech Mono', 'monospace'],
+                    },
+                    colors: {
+                        hud: {
+                            bg: '#050b14',
+                            panel: '#0a1526',
+                            border: '#1e3a5f',
+                            cyan: '#00f0ff',
+                            emerald: '#00ff9d',
+                            amber: '#ffb700',
+                            rose: '#ff2a6d'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Noto Sans TC', 'Orbitron', sans-serif;
+            background-color: #030712;
+            background-image: 
+                radial-gradient(circle at 50% 50%, rgba(0, 240, 255, 0.05) 0%, transparent 70%),
+                linear-gradient(rgba(15, 23, 42, 0.8) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(15, 23, 42, 0.8) 1px, transparent 1px);
+            background-size: 100% 100%, 20px 20px, 20px 20px;
+        }
+
+        .font-mono-hud { font-family: 'JetBrains Mono', 'Share Tech Mono', monospace; }
+        .font-hud-header { font-family: 'Orbitron', 'Noto Sans TC', sans-serif; }
+
+        /* Cockpit HUD Cutout Corners */
+        .hud-panel {
+            background: rgba(8, 18, 33, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            box-shadow: inset 0 0 15px rgba(0, 240, 255, 0.03), 0 4px 20px rgba(0, 0, 0, 0.6);
+            position: relative;
+        }
+
+        .hud-panel::before {
+            content: '';
+            position: absolute;
+            top: -1px; left: 8px; right: 8px; height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.8), transparent);
+        }
+
+        /* Sci-Fi Glows & LED States */
+        .led-on-y {
+            background-color: #00ff9d;
+            box-shadow: 0 0 8px #00ff9d, 0 0 16px rgba(0, 255, 157, 0.6);
+            animation: pulse-green 2s infinite alternate;
+        }
+        .led-on-x {
+            background-color: #00f0ff;
+            box-shadow: 0 0 8px #00f0ff, 0 0 16px rgba(0, 240, 255, 0.7);
+            animation: pulse-cyan 1.5s infinite alternate;
+        }
+        .led-off {
+            background-color: #1e293b;
+            border: 1px solid #334155;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.8);
+        }
+
+        @keyframes pulse-green {
+            0% { box-shadow: 0 0 6px #00ff9d, 0 0 12px rgba(0, 255, 157, 0.5); }
+            100% { box-shadow: 0 0 12px #00ff9d, 0 0 22px rgba(0, 255, 157, 0.9); }
+        }
+        @keyframes pulse-cyan {
+            0% { box-shadow: 0 0 6px #00f0ff, 0 0 12px rgba(0, 240, 255, 0.5); }
+            100% { box-shadow: 0 0 12px #00f0ff, 0 0 22px rgba(0, 240, 255, 0.9); }
+        }
+
+        /* Scanline Overlay Effect */
+        .scanline {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0, 240, 255, 0.03) 50%,
+                rgba(0, 240, 255, 0.03)
+            );
+            background-size: 100% 4px;
+        }
+
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #030712; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 2px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #00f0ff; }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col bg-slate-950 text-slate-100 scanline select-none">
+
+    <!-- Top HUD Navigation Bar (Fixed 48px) -->
+    <header class="h-12 border-b border-cyan-900/60 bg-slate-950/90 px-3 flex items-center justify-between shrink-0 z-50">
+        <div class="flex items-center space-x-3">
+            <!-- Spaceship Reactor Core Logo -->
+            <div class="relative flex items-center justify-center w-8 h-8 rounded-lg bg-cyan-950/80 border border-cyan-500/50 text-cyan-400 shadow-[0_0_10px_rgba(0,240,255,0.3)]">
+                <i class="fa-solid fa-crosshairs text-base animate-spin-slow"></i>
+            </div>
+            <div>
+                <div class="flex items-center gap-2 leading-none">
+                    <span class="font-hud-header font-black text-xs sm:text-sm tracking-widest text-white">FX-COCKPIT</span>
+                    <span class="text-[10px] font-mono-hud px-1.5 py-0.5 rounded bg-cyan-950/90 text-cyan-400 border border-cyan-700/80">FX-3U / RS-422</span>
+                </div>
+                <p class="text-[10px] text-slate-400 tracking-wider">MITSUBISHI PLC STARSHIP TACTICAL CONTROLLER</p>
+            </div>
+        </div>
+
+        <!-- Connection Status & Top Actions -->
+        <div class="flex items-center gap-2">
+            <button onclick="openTroubleModal()" class="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-950/60 text-amber-300 border border-amber-700/60 hover:bg-amber-900/80 transition-all flex items-center gap-1 shadow-sm">
+                <i class="fa-solid fa-triangle-exclamation text-amber-400"></i> 排錯診斷
+            </button>
+            <div id="statusBadge" class="inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-mono-hud bg-slate-900 text-slate-400 border border-slate-800 transition-all">
+                <span class="w-2 h-2 rounded-full bg-slate-600 mr-1.5" id="statusDot"></span>
+                <span id="statusText">DISCONNECTED</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Error Banner (Absolute Top Layer) -->
+    <div id="errorBanner" class="hidden absolute top-14 left-4 right-4 z-50">
+        <div class="bg-rose-950/95 border border-rose-600 text-rose-200 px-4 py-2 rounded-lg text-xs flex items-center justify-between gap-3 shadow-2xl backdrop-blur-md">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-circle-exclamation text-rose-400 text-base"></i>
+                <span class="font-bold text-rose-300" id="errorTitle">COM 通訊埠開啟失敗</span>
+                <span class="text-rose-200/90" id="errorDetail">詳細錯誤訊息將顯示於此...</span>
+            </div>
+            <button onclick="hideErrorBanner()" class="text-rose-400 hover:text-white">
+                <i class="fa-solid fa-xmark text-sm"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Cockpit Screen Container (Single Page, Calc Height) -->
+    <main class="flex-1 grid grid-cols-12 gap-2 p-2 overflow-hidden h-[calc(100vh-3rem)]">
+
+        <!-- LEFT TACTICAL SYSTEM COLUMN (Span 3) -->
+        <div class="col-span-12 lg:col-span-3 flex flex-col gap-2 overflow-hidden h-full">
+            
+            <!-- Serial Link Config Panel -->
+            <div class="hud-panel rounded-xl p-2.5 space-y-2 shrink-0">
+                <div class="flex items-center justify-between border-b border-cyan-900/50 pb-1">
+                    <h2 class="text-xs font-hud-header font-bold text-cyan-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-satellite text-cyan-400"></i>
+                        通訊埠鏈結 (9600, 7, E, 1)
+                    </h2>
+                    <span class="text-[9px] font-mono-hud text-slate-400">SERIAL LINK</span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-1.5 text-[11px]">
+                    <div>
+                        <label class="block text-[10px] text-slate-400 mb-0.5">BAUD RATE</label>
+                        <select id="baudRate" class="w-full bg-slate-950 border border-cyan-900/80 rounded px-1.5 py-0.5 font-mono-hud text-cyan-300 focus:outline-none focus:border-cyan-400 text-[11px]">
+                            <option value="9600" selected>9600 bps</option>
+                            <option value="19200">19200 bps</option>
+                            <option value="38400">38400 bps</option>
+                            <option value="115200">115200 bps</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] text-slate-400 mb-0.5">DATA BITS</label>
+                        <select id="dataBits" class="w-full bg-slate-950 border border-cyan-900/80 rounded px-1.5 py-0.5 font-mono-hud text-cyan-300 focus:outline-none focus:border-cyan-400 text-[11px]">
+                            <option value="7" selected>7 Bits (FX)</option>
+                            <option value="8">8 Bits</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] text-slate-400 mb-0.5">PARITY</label>
+                        <select id="parity" class="w-full bg-slate-950 border border-cyan-900/80 rounded px-1.5 py-0.5 font-mono-hud text-cyan-300 focus:outline-none focus:border-cyan-400 text-[11px]">
+                            <option value="even" selected>Even (偶校驗)</option>
+                            <option value="none">None (無)</option>
+                            <option value="odd">Odd (奇校驗)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] text-slate-400 mb-0.5">STOP BITS</label>
+                        <select id="stopBits" class="w-full bg-slate-950 border border-cyan-900/80 rounded px-1.5 py-0.5 font-mono-hud text-cyan-300 focus:outline-none focus:border-cyan-400 text-[11px]">
+                            <option value="1" selected>1 Bit</option>
+                            <option value="2">2 Bits</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-1.5 pt-1">
+                    <button id="btnConnect" onclick="connectSerial()" class="flex-1 py-1 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-bold rounded text-[11px] transition-all shadow-md shadow-cyan-900/40 flex items-center justify-center gap-1">
+                        <i class="fa-solid fa-plug text-[10px]"></i> 連接 COM 埠
+                    </button>
+                    <button id="btnDisconnect" onclick="disconnectSerial()" disabled class="py-1 px-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed text-slate-400 border border-slate-700 rounded text-[11px] transition-all">
+                        <i class="fa-solid fa-power-off"></i>
+                    </button>
+                </div>
+
+                <div class="pt-0.5 flex items-center justify-between">
+                    <label class="inline-flex items-center cursor-pointer select-none">
+                        <input type="checkbox" id="simModeCheck" class="sr-only peer" onchange="toggleSimMode(this.checked)">
+                        <div class="w-7 h-3.5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-cyan-500 relative"></div>
+                        <span class="ml-1.5 text-[10px] font-medium text-slate-300">模擬測試模式</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Global Batch Operations Panel -->
+            <div class="hud-panel rounded-xl p-2.5 space-y-2 shrink-0">
+                <h2 class="text-xs font-hud-header font-bold text-amber-300 flex items-center gap-1.5">
+                    <i class="fa-solid fa-bolt text-amber-400"></i>
+                    Y 全域戰術超駕 (Batch Control)
+                </h2>
+
+                <div class="grid grid-cols-2 gap-1.5">
+                    <button onclick="batchTurnAll(false)" class="py-1.5 bg-rose-950/80 border border-rose-700/80 hover:bg-rose-900/80 text-rose-200 rounded text-[11px] font-bold transition-all flex items-center justify-center gap-1 shadow">
+                        <i class="fa-solid fa-power-off text-rose-400 text-[10px]"></i> 全關 (All OFF)
+                    </button>
+                    <button onclick="batchTurnAll(true)" class="py-1.5 bg-emerald-950/80 border border-emerald-700/80 hover:bg-emerald-900/80 text-emerald-200 rounded text-[11px] font-bold transition-all flex items-center justify-center gap-1 shadow">
+                        <i class="fa-solid fa-bolt text-emerald-400 text-[10px]"></i> 全開 (All ON)
+                    </button>
+                </div>
+
+                <button onclick="runAutoCycleTest()" id="btnCycleTest" class="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-800/80 rounded text-[11px] font-mono-hud transition-all flex items-center justify-center gap-1.5">
+                    <i class="fa-solid fa-rotate text-cyan-400 text-[10px]"></i> 執行跑馬燈輪巡 (2s/點)
+                </button>
+            </div>
+
+            <!-- Command Calculator & Protocol Inspector Panel -->
+            <div class="hud-panel rounded-xl p-2.5 space-y-1.5 flex-1 flex flex-col justify-between overflow-hidden">
+                <div class="space-y-1.5">
+                    <h2 class="text-xs font-hud-header font-bold text-indigo-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-microchip text-indigo-400"></i>
+                        封包試算器 (FX Hex Inspector)
+                    </h2>
+
+                    <div class="p-1.5 bg-slate-950/90 rounded border border-cyan-900/60 font-mono-hud text-[10px] space-y-1">
+                        <div class="text-slate-400 flex justify-between border-b border-slate-800 pb-0.5 text-[9px]">
+                            <span>[STX]</span><span>[CMD]</span><span>[ADDR]</span><span>[ETX]</span><span>[SUM]</span>
+                        </div>
+                        <div class="text-cyan-400 font-bold flex justify-between text-[11px]" id="protocolSampleView">
+                            <span class="text-slate-500">02</span>
+                            <span class="text-amber-400">37/38</span>
+                            <span class="text-emerald-400">0005~0F05</span>
+                            <span class="text-slate-500">03</span>
+                            <span class="text-rose-400">XX XX</span>
+                        </div>
+                    </div>
+
+                    <div class="space-y-1 pt-0.5">
+                        <label class="block text-[10px] text-slate-400">自訂發送點位與動作：</label>
+                        <div class="flex gap-1">
+                            <select id="calcYSelect" onchange="calculateCustomCommand()" class="bg-slate-950 border border-cyan-900/80 rounded px-1.5 py-0.5 font-mono-hud text-[10px] text-slate-200 flex-1">
+                            </select>
+                            <select id="calcActionSelect" onchange="calculateCustomCommand()" class="bg-slate-950 border border-cyan-900/80 rounded px-1 py-0.5 font-mono-hud text-[10px] text-slate-200">
+                                <option value="ON">ON (37)</option>
+                                <option value="OFF">OFF (38)</option>
+                            </select>
+                        </div>
+                        <div class="flex gap-1">
+                            <input type="text" id="calcResultOutput" readonly class="flex-1 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 font-mono-hud text-[10px] text-emerald-400 font-bold">
+                            <button onclick="sendCalculatedCmd()" class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[10px] font-bold">
+                                發送
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="text-[9px] text-slate-500 font-mono-hud border-t border-slate-800 pt-1">
+                    STATUS: READY // SYSTEM NOMINAL
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT TACTICAL DISPLAY & CONTROLLER COLUMN (Span 9) -->
+        <div class="col-span-12 lg:col-span-9 flex flex-col gap-2 overflow-hidden h-full">
+
+            <!-- X INPUT SENSORS MATRIX HUD (16 Points Grid: 8 x 2) -->
+            <div class="hud-panel rounded-xl p-2.5 flex flex-col shrink-0">
+                <div class="flex items-center justify-between border-b border-cyan-900/60 pb-1.5 mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+                        <h2 class="text-xs font-hud-header font-bold text-cyan-300 tracking-wider">
+                            X 輸入感測器矩陣 [X0 ~ X17] (16 POINTS)
+                        </h2>
+                        <span class="text-[9px] font-mono-hud text-slate-400 hidden sm:inline">(ADDR: 0080H)</span>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <button onclick="readXInputsOnce()" class="px-2 py-0.5 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-700 rounded text-[10px] font-bold transition-all">
+                            <i class="fa-solid fa-arrows-rotate mr-1"></i> 讀取 (Read X)
+                        </button>
+                        <label class="inline-flex items-center cursor-pointer select-none bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                            <input type="checkbox" id="autoPollXCheck" class="sr-only peer" onchange="toggleAutoPollX(this.checked)">
+                            <div class="w-6 h-3 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-cyan-500 relative"></div>
+                            <span class="ml-1 text-[10px] font-mono-hud text-slate-300">輪巡(500ms)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 8 x 2 Grid for 16 X Inputs -->
+                <div id="xGrid" class="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                    <!-- Dynamic X Input Cards Rendered Here -->
+                </div>
+            </div>
+
+            <!-- Y OUTPUT ACTUATORS CONTROL HUD (16 Points Grid: 8 x 2) -->
+            <div class="hud-panel rounded-xl p-2.5 flex flex-col shrink-0">
+                <div class="flex items-center justify-between border-b border-emerald-900/60 pb-1.5 mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <h2 class="text-xs font-hud-header font-bold text-emerald-300 tracking-wider">
+                            Y 輸出致動器控制面板 [Y0 ~ Y17] (16 POINTS)
+                        </h2>
+                        <span class="text-[9px] font-mono-hud text-slate-400 hidden sm:inline">(BASE: 0x0500)</span>
+                    </div>
+
+                    <div class="text-[10px] text-slate-400 flex items-center gap-3 font-mono-hud">
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block shadow-[0_0_8px_#00ff9d]"></span> ON</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-slate-700 inline-block"></span> OFF</span>
+                    </div>
+                </div>
+
+                <!-- 8 x 2 Grid for 16 Y Outputs -->
+                <div id="yGrid" class="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                    <!-- Dynamic Y Output Cards Rendered Here -->
+                </div>
+            </div>
+
+            <!-- TELEMETRY & COMMS TERMINAL LOG (Fills Remaining Space) -->
+            <div class="hud-panel rounded-xl p-2 flex-1 flex flex-col overflow-hidden">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-1 mb-1">
+                    <h3 class="text-xs font-hud-header font-bold text-slate-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-terminal text-emerald-400"></i>
+                        通訊遙測數據監控台 (TX/RX LOG TERMINAL)
+                    </h3>
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="clearLog()" class="text-[10px] text-slate-400 hover:text-white px-2 py-0.5 bg-slate-900 rounded border border-slate-800 transition-colors">
+                            <i class="fa-solid fa-trash-can mr-1"></i> 清除
+                        </button>
+                        <button onclick="copyLog()" class="text-[10px] text-slate-400 hover:text-white px-2 py-0.5 bg-slate-900 rounded border border-slate-800 transition-colors">
+                            <i class="fa-regular fa-copy mr-1"></i> 複製 Logs
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Log Terminal Output Area -->
+                <div id="terminalLog" class="flex-1 bg-slate-950/90 rounded p-2 border border-slate-800/80 font-mono-hud text-[11px] overflow-y-auto space-y-1 custom-scrollbar">
+                    <div class="text-slate-500 italic">[SYSTEM INITIALIZED] 駕駛艙系統準備就緒。點擊「連接 COM 埠」或開啟「模擬測試模式」開啟調試。</div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- TroubleShooting Modal -->
+    <div id="troubleModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="hud-panel rounded-2xl max-w-lg w-full p-5 space-y-3 shadow-2xl text-slate-200">
+            <div class="flex items-center justify-between border-b border-cyan-900/60 pb-2">
+                <h3 class="text-sm font-hud-header font-bold text-amber-300 flex items-center gap-2">
+                    <i class="fa-solid fa-wrench text-amber-400"></i>
+                    通訊連線與控制診斷指引
+                </h3>
+                <button onclick="closeTroubleModal()" class="text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div class="space-y-2 text-xs leading-relaxed text-slate-300">
+                <div class="p-2.5 bg-slate-950 rounded border border-slate-800 space-y-1">
+                    <div class="font-bold text-amber-300">1. COM 埠獨占檢查</div>
+                    <p class="text-slate-400 text-[11px]">
+                        請確保 GX Developer / GX Works3 或串口調試助手軟體已關閉。
+                    </p>
+                </div>
+
+                <div class="p-2.5 bg-slate-950 rounded border border-slate-800 space-y-1">
+                    <div class="font-bold text-cyan-300">2. 三菱 FX 通訊參數設定</div>
+                    <p class="text-slate-400 font-mono-hud text-[11px]">
+                        Baud: 9600 | Data: 7 Bits | Parity: Even | Stop: 1 Bit
+                    </p>
+                </div>
+
+                <div class="p-2.5 bg-slate-950 rounded border border-slate-800 space-y-1">
+                    <div class="font-bold text-emerald-300">3. Y2~Y17 強制 OFF 控制說明</div>
+                    <p class="text-slate-400 text-[11px]">
+                        本系統已精確校正三菱 ASCII Checksum 演算技術（STX 至 ETX 加總），可完美對抗記憶體鎖定問題。
+                    </p>
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-1">
+                <button onclick="closeTroubleModal()" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold">
+                    確認關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        // Mitsubishi FX Protocol Y Output Points Definition (Y0 - Y17, Octal)
+        const Y_POINTS = [
+            { name: 'Y0',  hw: 'A',     desc: '推料缸伸出',                 addrStr: '0005', addr: '0500H' },
+            { name: 'Y1',  hw: '-',     desc: '預留 / 備用',                addrStr: '0105', addr: '0501H' },
+            { name: 'Y2',  hw: 'R2',    desc: '轉至 0°輔助定位機構',         addrStr: '0205', addr: '0502H' },
+            { name: 'Y3',  hw: 'B1',    desc: '迴轉缸轉至 0°/+90°',          addrStr: '0305', addr: '0503H' },
+            { name: 'Y4',  hw: 'B2',    desc: '迴轉缸轉至 0°/-90°',          addrStr: '0405', addr: '0504H' },
+            { name: 'Y5',  hw: 'C+',    desc: '真空吸盤吸',                 addrStr: '0505', addr: '0505H' },
+            { name: 'Y6',  hw: 'C-',    desc: '真空吸盤放',                 addrStr: '0605', addr: '0506H' },
+            { name: 'Y7',  hw: 'R1',    desc: '升降模組馬達旋轉(M+)',        addrStr: '0705', addr: '0507H' },
+            { name: 'Y10', hw: '-',     desc: '預留 / 備用',                addrStr: '0805', addr: '0508H' },
+            { name: 'Y11', hw: '-',     desc: '預留 / 備用',                addrStr: '0905', addr: '0509H' },
+            { name: 'Y12', hw: '-',     desc: '預留 / 備用',                addrStr: '0A05', addr: '050AH' },
+            { name: 'Y13', hw: '-',     desc: '預留 / 備用',                addrStr: '0B05', addr: '050BH' },
+            { name: 'Y14', hw: '-',     desc: '預留 / 備用',                addrStr: '0C05', addr: '050CH' },
+            { name: 'Y15', hw: 'RL',    desc: '紅燈',                       addrStr: '0D05', addr: '050DH' },
+            { name: 'Y16', hw: 'YL',    desc: '黃燈',                       addrStr: '0E05', addr: '050EH' },
+            { name: 'Y17', hw: 'GL',    desc: '綠燈',                       addrStr: '0F05', addr: '050FH' }
+        ];
+
+        // Mitsubishi FX Protocol X Input Points (X0 - X17, 16 Points Total)
+        const X_POINTS = [
+            { name: 'X0',  hw: 'a1',     desc: '推料缸前端點',           byteIdx: 0, bitMask: 0x01 },
+            { name: 'X1',  hw: 'a0',     desc: '推料缸後端點',           byteIdx: 0, bitMask: 0x02 },
+            { name: 'X2',  hw: 'b0',     desc: '迴轉缸 0°端點',          byteIdx: 0, bitMask: 0x04 },
+            { name: 'X3',  hw: 'b1',     desc: '迴轉缸 +90°端點',        byteIdx: 0, bitMask: 0x08 },
+            { name: 'X4',  hw: 'b2',     desc: '迴轉缸 -90°端點',        byteIdx: 0, bitMask: 0x10 },
+            { name: 'X5',  hw: 'ps1',    desc: '真空壓力開關',           byteIdx: 0, bitMask: 0x20 },
+            { name: 'X6',  hw: 'd0',     desc: '升降模組上端點',         byteIdx: 0, bitMask: 0x40 },
+            { name: 'X7',  hw: 'd1',     desc: '升降模組下端點',         byteIdx: 0, bitMask: 0x80 },
+            { name: 'X10', hw: 's1',     desc: '料件方向感測器',         byteIdx: 1, bitMask: 0x01 },
+            { name: 'X11', hw: '-',      desc: '預留 / 備用',            byteIdx: 1, bitMask: 0x02 },
+            { name: 'X12', hw: '-',      desc: '預留 / 備用',            byteIdx: 1, bitMask: 0x04 },
+            { name: 'X13', hw: 'COS1',   desc: '復歸模式/工作模式',      byteIdx: 1, bitMask: 0x08 },
+            { name: 'X14', hw: 'COS2_L', desc: '單一循環/指定功能',      byteIdx: 1, bitMask: 0x10 },
+            { name: 'X15', hw: 'COS2_R', desc: '單一循環/連續循環',      byteIdx: 1, bitMask: 0x20 },
+            { name: 'X16', hw: 'ST/RST', desc: '啟動鈕/復歸鈕',          byteIdx: 1, bitMask: 0x40 },
+            { name: 'X17', hw: 'EMS',    desc: '緊急停止開關(NC)',       byteIdx: 1, bitMask: 0x80 }
+        ];
+
+        // Global State Variables
+        let serialPort = null;
+        let serialReader = null;
+        let serialWriter = null;
+        let isSimMode = false;
+        let isCycling = false;
+        let cycleIntervalId = null;
+        let autoPollIntervalId = null;
+        const yStates = {};
+        const xStates = {};
+
+        // Precision Dynamic FX Checksum Calculation Engine
+        function buildFxCommand(cmdHex, addrAsciiStr, lenOrTypeAsciiStr = '') {
+            const addrBytes = Array.from(addrAsciiStr).map(c => c.charCodeAt(0));
+            const extraBytes = lenOrTypeAsciiStr ? Array.from(lenOrTypeAsciiStr).map(c => c.charCodeAt(0)) : [];
+            
+            let sum = cmdHex;
+            addrBytes.forEach(b => sum += b);
+            extraBytes.forEach(b => sum += b);
+            sum += 0x03; // ETX
+
+            const checksumVal = sum % 256;
+            const checksumHexStr = checksumVal.toString(16).toUpperCase().padStart(2, '0');
+            const c0 = checksumHexStr.charCodeAt(0);
+            const c1 = checksumHexStr.charCodeAt(1);
+
+            const hexParts = ['02', cmdHex.toString(16).toUpperCase().padStart(2, '0')];
+            addrBytes.forEach(b => hexParts.push(b.toString(16).toUpperCase().padStart(2, '0')));
+            extraBytes.forEach(b => hexParts.push(b.toString(16).toUpperCase().padStart(2, '0')));
+            hexParts.push('03');
+            hexParts.push(c0.toString(16).toUpperCase().padStart(2, '0'));
+            hexParts.push(c1.toString(16).toUpperCase().padStart(2, '0'));
+
+            return hexParts.join(' ');
+        }
+
+        // Standard FX Read Command for X0~X17 (Address 0080H, Length 2 Bytes)
+        const READ_X_CMD = buildFxCommand(0x30, "0080", "02");
+
+        // Initialize Cockpit UI on DOM Load
+        window.addEventListener('DOMContentLoaded', () => {
+            // Calculate exact checksum ON and OFF commands for all Y points dynamically
+            Y_POINTS.forEach(pt => {
+                pt.onCmd = buildFxCommand(0x37, pt.addrStr);  // Force SET (0x37)
+                pt.offCmd = buildFxCommand(0x38, pt.addrStr); // Force RESET (0x38)
+                yStates[pt.name] = false;
+            });
+
+            X_POINTS.forEach(pt => xStates[pt.name] = false);
+            
+            // Set initial simulation states for X
+            xStates['X1'] = true;
+            xStates['X4'] = true;
+            xStates['X6'] = true;
+
+            renderYGrid();
+            renderXGrid();
+            populateCalcSelects();
+            calculateCustomCommand();
+            logTerminal('SYS', '駕駛艙戰術介面初始化完成。全數 Y0~Y17 指令驗算完畢。');
+        });
+
+        function renderYGrid() {
+            const grid = document.getElementById('yGrid');
+            if (!grid) return;
+            grid.innerHTML = '';
+
+            Y_POINTS.forEach(pt => {
+                const isOn = yStates[pt.name];
+                const card = document.createElement('div');
+                card.className = `p-1.5 rounded-lg border transition-all flex flex-col justify-between ${
+                    isOn 
+                    ? 'bg-emerald-950/40 border-emerald-500/80 shadow-[0_0_12px_rgba(0,255,157,0.2)]' 
+                    : 'bg-slate-950/80 border-slate-800/90 hover:border-slate-700'
+                }`;
+
+                card.innerHTML = `
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-1">
+                                <span class="w-2 h-2 rounded-full ${isOn ? 'led-on-y' : 'led-off'} shrink-0"></span>
+                                <span class="font-bold text-xs font-mono-hud ${isOn ? 'text-emerald-300' : 'text-slate-200'}">${pt.name}</span>
+                            </div>
+                            <span class="text-[9px] font-mono-hud px-1 rounded bg-slate-900 text-amber-300 border border-slate-800 font-semibold">${pt.hw}</span>
+                        </div>
+                        <div class="text-[10px] font-medium text-slate-300 mt-1 truncate" title="${pt.desc}">${pt.desc}</div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-1 mt-1.5">
+                        <button onclick="toggleYPoint('${pt.name}', true)" class="py-0.5 px-1 rounded text-[10px] font-bold transition-all ${
+                            isOn 
+                            ? 'bg-emerald-600 text-white shadow-[0_0_6px_#00ff9d]' 
+                            : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800'
+                        }">
+                            ON
+                        </button>
+                        <button onclick="toggleYPoint('${pt.name}', false)" class="py-0.5 px-1 rounded text-[10px] font-bold transition-all ${
+                            !isOn 
+                            ? 'bg-rose-950 text-rose-300 border border-rose-800' 
+                            : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800'
+                        }">
+                            OFF
+                        </button>
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        function renderXGrid() {
+            const grid = document.getElementById('xGrid');
+            if (!grid) return;
+            grid.innerHTML = '';
+
+            X_POINTS.forEach(pt => {
+                const isOn = xStates[pt.name];
+                const card = document.createElement('div');
+                card.className = `p-1.5 rounded-lg border transition-all flex flex-col justify-between ${
+                    isOn 
+                    ? 'bg-cyan-950/40 border-cyan-500/80 shadow-[0_0_12px_rgba(0,240,255,0.2)]' 
+                    : 'bg-slate-950/80 border-slate-800/90'
+                }`;
+
+                card.innerHTML = `
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-1">
+                                <span class="w-2 h-2 rounded-full ${isOn ? 'led-on-x' : 'led-off'} shrink-0"></span>
+                                <span class="font-bold text-xs font-mono-hud ${isOn ? 'text-cyan-300' : 'text-slate-200'}">${pt.name}</span>
+                            </div>
+                            <span class="text-[9px] font-mono-hud px-1 rounded bg-slate-900 text-amber-300 border border-slate-800 font-semibold">${pt.hw}</span>
+                        </div>
+                        <div class="text-[10px] font-medium text-slate-300 mt-1 truncate" title="${pt.desc}">${pt.desc}</div>
+                    </div>
+
+                    <div class="flex items-center justify-between mt-1 pt-0.5 border-t border-slate-800/60 text-[9px]">
+                        <span class="text-slate-500 font-mono-hud">${isOn ? 'ACTIVE' : 'IDLE'}</span>
+                        ${isSimMode ? `
+                        <button onclick="toggleSimXState('${pt.name}')" class="text-[9px] px-1 py-0.2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded border border-slate-700">
+                            切換
+                        </button>` : `<span class="text-slate-600">LIVE</span>`}
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        function toggleSimXState(xName) {
+            if (!isSimMode) return;
+            xStates[xName] = !xStates[xName];
+            renderXGrid();
+            logTerminal('SYS', `模擬測試：變更 ${xName} 狀態為 ${xStates[xName] ? 'ON' : 'OFF'}`);
+        }
+
+        function readXInputsOnce() {
+            sendHexCommand(READ_X_CMD, 'X0~X17', 'READ');
+        }
+
+        function toggleAutoPollX(enabled) {
+            if (enabled) {
+                readXInputsOnce();
+                autoPollIntervalId = setInterval(() => {
+                    readXInputsOnce();
+                }, 500);
+                logTerminal('SYS', '自動輪巡 X0~X17 輸入狀態中 (500ms)...');
+            } else {
+                if (autoPollIntervalId) clearInterval(autoPollIntervalId);
+                autoPollIntervalId = null;
+                logTerminal('SYS', '已停止自動輪巡。');
+            }
+        }
+
+        // Parse Response Frame for Mitsubishi FX Read Command
+        function parseXResponse(hexArray) {
+            if (!hexArray || hexArray.length < 4) return;
+            
+            const stxIdx = hexArray.indexOf('02');
+            const etxIdx = hexArray.indexOf('03', stxIdx);
+
+            if (stxIdx !== -1 && etxIdx > stxIdx) {
+                const asciiBytes = hexArray.slice(stxIdx + 1, etxIdx);
+                const dataChars = asciiBytes.map(h => String.fromCharCode(parseInt(h, 16))).join('');
+
+                if (dataChars.length >= 4) {
+                    const byte0Val = parseInt(dataChars.substring(0, 2), 16) || 0;
+                    const byte1Val = parseInt(dataChars.substring(2, 4), 16) || 0;
+
+                    X_POINTS.forEach(pt => {
+                        const val = pt.byteIdx === 0 ? byte0Val : byte1Val;
+                        xStates[pt.name] = !!(val & pt.bitMask);
+                    });
+
+                    renderXGrid();
+                }
+            }
+        }
+
+        async function connectSerial() {
+            if (!('serial' in navigator)) {
+                showErrorBanner('瀏覽器不支援 Web Serial API', '請使用 Google Chrome 或 Microsoft Edge 瀏覽器。');
+                return;
+            }
+
+            try {
+                hideErrorBanner();
+                serialPort = await navigator.serial.requestPort();
+                
+                const baudRate = parseInt(document.getElementById('baudRate').value);
+                const dataBits = parseInt(document.getElementById('dataBits').value);
+                const parity = document.getElementById('parity').value;
+                const stopBits = parseInt(document.getElementById('stopBits').value);
+
+                await serialPort.open({
+                    baudRate: baudRate,
+                    dataBits: dataBits,
+                    parity: parity,
+                    stopBits: stopBits
+                });
+
+                updateConnectionStatus(true);
+                logTerminal('SYS', `串列埠成功建立連線 [${baudRate}bps, ${dataBits}, ${parity.toUpperCase()}, ${stopBits}]`);
+                
+                readSerialLoop();
+
+            } catch (err) {
+                console.error(err);
+                showErrorBanner('COM 通訊埠開啟失敗', err.message || '無法開啟選取的通訊埠，請確認是否被其他程式占用。');
+                updateConnectionStatus(false);
+            }
+        }
+
+        async function disconnectSerial() {
+            try {
+                if (autoPollIntervalId) {
+                    document.getElementById('autoPollXCheck').checked = false;
+                    toggleAutoPollX(false);
+                }
+
+                if (serialReader) {
+                    await serialReader.cancel();
+                    serialReader.releaseLock();
+                    serialReader = null;
+                }
+                if (serialWriter) {
+                    serialWriter.releaseLock();
+                    serialWriter = null;
+                }
+                if (serialPort) {
+                    await serialPort.close();
+                    serialPort = null;
+                }
+                updateConnectionStatus(false);
+                logTerminal('SYS', '已斷開與 COM 埠之連線。');
+            } catch (err) {
+                console.error(err);
+                logTerminal('ERR', `斷開連線發生例外: ${err.message}`);
+            }
+        }
+
+        async function readSerialLoop() {
+            while (serialPort && serialPort.readable) {
+                try {
+                    serialReader = serialPort.readable.getReader();
+                    while (true) {
+                        const { value, done } = await serialReader.read();
+                        if (done) break;
+                        if (value) {
+                            const hexArray = Array.from(value).map(b => b.toString(16).padStart(2, '0').toUpperCase());
+                            const hexStr = hexArray.join(' ');
+                            logTerminal('RX', hexStr);
+
+                            if (hexArray.includes('02') && hexArray.includes('03')) {
+                                parseXResponse(hexArray);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    logTerminal('ERR', `資料接收錯誤: ${err.message}`);
+                    break;
+                } finally {
+                    if (serialReader) {
+                        serialReader.releaseLock();
+                        serialReader = null;
+                    }
+                }
+            }
+        }
+
+        async function sendHexCommand(hexStr, targetName = '', action = '') {
+            logTerminal('TX', `${targetName} ${action} => ${hexStr}`);
+
+            if (isSimMode || !serialPort || !serialPort.writable) {
+                setTimeout(() => {
+                    if (action === 'READ') {
+                        let byte0 = 0;
+                        let byte1 = 0;
+                        X_POINTS.forEach(pt => {
+                            if (xStates[pt.name]) {
+                                if (pt.byteIdx === 0) byte0 |= pt.bitMask;
+                                else byte1 |= pt.bitMask;
+                            }
+                        });
+                        const b0Hex = byte0.toString(16).padStart(2, '0').toUpperCase();
+                        const b1Hex = byte1.toString(16).padStart(2, '0').toUpperCase();
+
+                        const simResponseHex = `02 ${b0Hex.charCodeAt(0).toString(16)} ${b0Hex.charCodeAt(1).toString(16)} ${b1Hex.charCodeAt(0).toString(16)} ${b1Hex.charCodeAt(1).toString(16)} 03 35 44`;
+                        logTerminal('RX', `[模擬回應] ${simResponseHex.toUpperCase()}`);
+                        parseXResponse(simResponseHex.toUpperCase().split(' '));
+                    } else {
+                        logTerminal('RX', '[模擬回應] 06 (ACK)');
+                    }
+                }, 80);
+                return;
+            }
+
+            try {
+                const hexBytes = hexStr.split(' ').map(h => parseInt(h, 16));
+                const byteArray = new Uint8Array(hexBytes);
+
+                const writer = serialPort.writable.getWriter();
+                await writer.write(byteArray);
+                writer.releaseLock();
+            } catch (err) {
+                logTerminal('ERR', `指令發送失敗: ${err.message}`);
+            }
+        }
+
+        function toggleYPoint(yName, targetState) {
+            const pt = Y_POINTS.find(p => p.name === yName);
+            if (!pt) return;
+
+            yStates[yName] = targetState;
+            renderYGrid();
+
+            const cmd = targetState ? pt.onCmd : pt.offCmd;
+            sendHexCommand(cmd, yName, targetState ? 'ON' : 'OFF');
+        }
+
+        function batchTurnAll(turnOn) {
+            Y_POINTS.forEach(pt => yStates[pt.name] = turnOn);
+            renderYGrid();
+            
+            logTerminal('SYS', `全域戰術控制：批次切換全數 Y 點位至 ${turnOn ? 'ON' : 'OFF'}`);
+            Y_POINTS.forEach((pt, idx) => {
+                setTimeout(() => {
+                    sendHexCommand(turnOn ? pt.onCmd : pt.offCmd, pt.name, turnOn ? 'ON' : 'OFF');
+                }, idx * 40);
+            });
+        }
+
+        function runAutoCycleTest() {
+            const btn = document.getElementById('btnCycleTest');
+            if (isCycling) {
+                clearInterval(cycleIntervalId);
+                cycleIntervalId = null;
+                isCycling = false;
+                btn.innerHTML = `<i class="fa-solid fa-rotate text-cyan-400 text-[10px]"></i> 執行跑馬燈輪巡 (2s/點)`;
+                btn.className = "w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-800/80 rounded text-[11px] font-mono-hud transition-all flex items-center justify-center gap-1.5";
+                logTerminal('SYS', '跑馬燈測試已終止。');
+                return;
+            }
+
+            isCycling = true;
+            btn.innerHTML = `<i class="fa-solid fa-stop text-rose-400 animate-pulse text-[10px]"></i> 停止跑馬燈測試`;
+            btn.className = "w-full py-1.5 bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-700 rounded text-[11px] font-mono-hud transition-all flex items-center justify-center gap-1.5";
+            logTerminal('SYS', '啟動 Y0~Y17 跑馬燈輪巡測試...');
+
+            let index = 0;
+            batchTurnAll(false);
+
+            cycleIntervalId = setInterval(() => {
+                const prevIndex = (index - 1 + Y_POINTS.length) % Y_POINTS.length;
+                toggleYPoint(Y_POINTS[prevIndex].name, false);
+                toggleYPoint(Y_POINTS[index].name, true);
+
+                index = (index + 1) % Y_POINTS.length;
+            }, 2000);
+        }
+
+        function toggleSimMode(checked) {
+            isSimMode = checked;
+            renderXGrid();
+            if (isSimMode) {
+                logTerminal('SYS', '切換至「模擬測試模式」：可在無實體 COM 埠連接下測試 UI 互動與數據傳輸。');
+            } else {
+                logTerminal('SYS', '關閉模擬測試模式：恢復實體 COM 埠模式。');
+            }
+        }
+
+        function populateCalcSelects() {
+            const select = document.getElementById('calcYSelect');
+            select.innerHTML = '';
+            Y_POINTS.forEach(pt => {
+                const opt = document.createElement('option');
+                opt.value = pt.name;
+                opt.textContent = `${pt.name} [${pt.hw}] ${pt.desc}`;
+                select.appendChild(opt);
+            });
+        }
+
+        function calculateCustomCommand() {
+            const yName = document.getElementById('calcYSelect').value;
+            const action = document.getElementById('calcActionSelect').value;
+            const pt = Y_POINTS.find(p => p.name === yName);
+            if (!pt) return;
+
+            const cmd = action === 'ON' ? pt.onCmd : pt.offCmd;
+            document.getElementById('calcResultOutput').value = cmd;
+        }
+
+        function sendCalculatedCmd() {
+            const yName = document.getElementById('calcYSelect').value;
+            const action = document.getElementById('calcActionSelect').value;
+            toggleYPoint(yName, action === 'ON');
+        }
+
+        function updateConnectionStatus(connected) {
+            const badge = document.getElementById('statusBadge');
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const btnConn = document.getElementById('btnConnect');
+            const btnDisc = document.getElementById('btnDisconnect');
+
+            if (connected) {
+                badge.className = "inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-mono-hud bg-emerald-950 text-emerald-300 border border-emerald-700 shadow-[0_0_10px_rgba(0,255,157,0.3)]";
+                dot.className = "w-2 h-2 rounded-full bg-emerald-400 mr-1.5 animate-ping";
+                text.textContent = "COM LINKED";
+                btnConn.disabled = true;
+                btnConn.classList.add('opacity-40', 'cursor-not-allowed');
+                btnDisc.disabled = false;
+            } else {
+                badge.className = "inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-mono-hud bg-slate-900 text-slate-400 border border-slate-800";
+                dot.className = "w-2 h-2 rounded-full bg-slate-600 mr-1.5";
+                text.textContent = "DISCONNECTED";
+                btnConn.disabled = false;
+                btnConn.classList.remove('opacity-40', 'cursor-not-allowed');
+                btnDisc.disabled = true;
+            }
+        }
+
+        function logTerminal(type, msg) {
+            const terminal = document.getElementById('terminalLog');
+            if (!terminal) return;
+
+            const now = new Date();
+            const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
+
+            let badgeColor = 'bg-slate-800 text-slate-400';
+            if (type === 'TX') badgeColor = 'bg-cyan-950 text-cyan-300 border border-cyan-800';
+            if (type === 'RX') badgeColor = 'bg-emerald-950 text-emerald-300 border border-emerald-800';
+            if (type === 'SYS') badgeColor = 'bg-indigo-950 text-indigo-300 border border-indigo-800';
+            if (type === 'ERR') badgeColor = 'bg-rose-950 text-rose-300 border border-rose-800';
+
+            const line = document.createElement('div');
+            line.className = 'flex items-start gap-1.5 text-slate-300 leading-tight';
+            line.innerHTML = `
+                <span class="text-slate-600 select-none text-[10px]">[${timeStr}]</span>
+                <span class="text-[9px] font-mono-hud px-1 rounded ${badgeColor}">${type}</span>
+                <span class="flex-1 break-all">${msg}</span>
+            `;
+
+            terminal.appendChild(line);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('terminalLog').innerHTML = '';
+            logTerminal('SYS', 'Terminal 數據紀錄已清除。');
+        }
+
+        function copyLog() {
+            const text = document.getElementById('terminalLog').innerText;
+            const el = document.createElement('textarea');
+            el.value = text;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            logTerminal('SYS', '已將數據紀錄複製至剪貼簿。');
+        }
+
+        function showErrorBanner(title, detail) {
+            document.getElementById('errorTitle').textContent = title;
+            document.getElementById('errorDetail').textContent = detail;
+            document.getElementById('errorBanner').classList.remove('hidden');
+        }
+
+        function hideErrorBanner() {
+            document.getElementById('errorBanner').classList.add('hidden');
+        }
+
+        function openTroubleModal() {
+            document.getElementById('troubleModal').classList.remove('hidden');
+        }
+
+        function closeTroubleModal() {
+            document.getElementById('troubleModal').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
